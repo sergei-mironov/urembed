@@ -86,15 +86,17 @@ pargs = A
       <> metavar "DIR"
       <> help "Path to the location of UrWeb's includes"
       <> value "/usr/local/include/urweb" )
-  <*> arguments str ( metavar "FILE" <> help "Source file name" )
+  <*> arguments str ( metavar "FILE" <> help "File to embed" )
 
 main :: IO ()
 main = execParser opts >>= main_
   where
     opts = info (helper <*> pargs)
       (  fullDesc
-      <> progDesc "Embeds a file as blob"
-      <> header "Uremebed is the Ur/Web module generator" )
+      <> progDesc (concat [
+          "Converts a FILE to the Ur/Web's module. Module will contain project "
+          ,"file named FILE.urp as well as other files under the same directory" ])
+      <> header "UrEmebed is the Ur/Web module generator" )
 
 exec_embed_sh env' = do
   script <- getDataFileName "embed.sh"
@@ -123,4 +125,6 @@ main_ (A tgt ui [inf]) = do
         return $ def ++ [ ("URE_JS_DECLS", unlines decls) ]
       False -> return def
   exec_embed_sh env
+main_ (A tgt ui _) = do
+  fail "UrEmbed requires one input file"
 

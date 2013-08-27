@@ -69,6 +69,7 @@ parse_js file modname = do
 
 data Args = A
   { tgtdir :: FilePath
+  , urinclude :: FilePath
   , files :: [FilePath]
   }
 
@@ -77,8 +78,14 @@ pargs = A
   <$> strOption
       (  long "output"
       <> short 'o'
+      <> metavar "FILE.urp"
+      <> help "Target Ur project file" )
+  <*> strOption
+      (  long "urinclude"
+      <> short 'I'
       <> metavar "DIR"
-      <> help "Target directory to place all files" )
+      <> help "Path to the location of UrWeb's includes"
+      <> value "/usr/local/include/urweb" )
   <*> arguments str ( metavar "FILE" <> help "Source file name" )
 
 main :: IO ()
@@ -102,22 +109,18 @@ exec_embed_sh env' = do
     fail $ printf "%s failed to complete" script
   return ()
 
-main_ (A tgt [inf]) = do
-  let modname = head1st $ map undot $ takeFileName inf where
-        head1st [] = []
-        head1st (x:xs) = (toUpper x : xs)
-        undot '.' = '_'
-        undot '-' = '_'
-        undot ' ' = '_'
-        undot x = x
-
+main_ (A tgt ui [inf]) = do
+  let modname = (takeBaseName tgt)
+  let tgtdir = (takeDirectory tgt)
   env <- do
-    let def = [ ("TGT",tgt) , ("FILE",inf), ("URE_MODULE_NAME", modname) ]
+    let def = [ ("TGT",tgtdir)
+              , ("FILE",inf)
+              , ("URE_MODULE_NAME", modname)
+              , ("UR_INCLUDE", ui) ]
     case (takeExtension inf) == ".js" of
-          True -> do
-            decls <- parse_js inf modname
-            return $ def ++ [ ("URE_JS_DECLS", unlines decls) ]
-          False -> return def
-
+      True -> do
+        decls <- parse_js inf modname
+        return $ def ++ [ ("URE_JS_DECLS", unlines decls) ]
+      False -> return def
   exec_embed_sh env
 

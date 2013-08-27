@@ -48,8 +48,11 @@ cat >$TMP/${f}.h <<EOF
 uw_Basis_blob uw_${f}_c_binary (uw_context ctx, uw_unit unit);
 EOF
 
-# FIXME: removme reference to 'local'
-$CC -c -I ~/local/include/urweb -o $TMP/${f}.o $TMP/${f}.c
+if ! test -d "$UR_INCLUDE" ; then
+  msg "UR_INCLUDE ($UR_INCLUDE) is not a directory" ; die
+fi
+
+$CC -c -I $UR_INCLUDE -o $TMP/${f}.o $TMP/${f}.c
 
 cat >$TMP/${f}_c.urs <<EOF
 val binary : unit -> transaction blob

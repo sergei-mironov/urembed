@@ -1,0 +1,12 @@
+*.swp
+*.o
+*.hi
+dist/*
+*.swo
+*.elf
+*.o
+*.co
+*.swn
+GUARD_*
+tmp/*
+tags

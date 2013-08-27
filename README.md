@@ -28,8 +28,8 @@ provided function
 
 Additionally, urembed is able to bind top-level JavaScript functions via
 JavaScript FFI. In order to do it, user has to make sure that FILE has .js
-extention and name their top-level functions using the 'name\_type' format. For
-example:
+extention and contains top-level functions named according to the 'name\_type'
+format. For example:
     
     function init_unit(menustyle_css_class, text_string) {}
 

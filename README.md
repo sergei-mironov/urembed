@@ -26,9 +26,9 @@ provided function
 
     val binary : unit -> transaction blob
 
-Additionally, JavaScript file, top-level functions will be binded via FFI, if
-formatted properly. To satisfy the binder, keep your function name and it's
-parameters names using the 'name\_type' format. For example:
+Additionally, urembed is able to bind top-level JavaScript functions via
+JavaScript FFI. In order to do it, user has to name the file with .js extention
+and name their top-level functions using the 'name\_type' format. For example:
     
     function init_unit(menustyle_css_class, text_string) {}
 

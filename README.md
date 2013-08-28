@@ -1,10 +1,12 @@
 UrEmbed
 -------
 
-Embeds file(s) into the Ur/Web project by creating the module providing function
+Embeds file(s) into the Ur/Web project by creating the module containing
 
-    val binary : unit -> transaction blob
+    datatype content = File_A | File_B ...
+    val binary : content -> transaction blob
 
+Additionally, Urembed greatly simplifies writing of the JavaScript FFIs.
 
 Installation
 ------------
@@ -18,6 +20,8 @@ environment is required (Cygwin should suffice under Windows)
 
 Usage
 -----
+
+=== Static files ===
 
 To embed Style.css into Ur/Web module, type
 
@@ -37,7 +41,9 @@ Particularly, that is how to serve the blob to the user:
       b <- Static.binary Static.Style_css;
       returnBlob b (blessMime "text/css")
 
-Additionally, urembed is able to bind top-level JavaScript functions via
+=== JavaScript FFI helper ===
+
+Urembed is able to bind top-level JavaScript functions via
 JavaScript FFI. In order to do it, user has to make sure that FILE has .js
 extension and contains top-level functions named according to the 'name\_type'
 format. For example:

@@ -4,6 +4,7 @@ module Main where
 
 import Control.Monad.Error
 import Control.Monad.State
+import Control.Monad.Writer
 import Language.JavaScript.Parser
 import System.Environment
 import System.Process
@@ -32,29 +33,10 @@ err,out :: (MonadIO m) => String -> m ()
 err = hio stderr
 out = hio stdout
 
-urs_line :: [(String,String)] -> String
-urs_line ((n,nt):args) = printf "val %s : %s" (n++('_':nt)) (fmtargs args nt) where
-  fmtargs :: [(String,String)] -> String -> String
-  fmtargs ((an,at):as) ret = printf "%s -> %s" at (fmtargs as ret)
-  fmtargs ([]) ret = printf "transaction %s" ret
-
-extractEmbeddedType :: (Monad m) => String -> m (String,String)
-extractEmbeddedType [] = error "BUG: empty identifier"
-extractEmbeddedType name = check . span (/= '_') $ name where
-  check (n,'_':t) = return (n,t)
-  check _ = fail $ printf "Can't extract the type from the identifier '%s'" name
-
-findTopLevelFunctions top = map decls $ listify is_func top where
-  is_func n@(JSFunction a b c d e f) = True
-  is_func _ = False
-  decls (JSFunction a b c d e f) = (identifiers b) ++ (identifiers d)
-  identifiers x = map name $ listify ids x where
-    ids i@(JSIdentifier s) = True
-    ids _ = False
-    name (JSIdentifier n) = n
-
-parse_js file modname = do
-  let jmodname = (modname++"_js")
+-- | Parse the JavaScript file, extract top-level functions, convert their
+-- signatures into Ur/Web format, return them as the list of strings
+parse_js :: FilePath -> IO [String]
+parse_js file = do
   s <- readFile file
   em <-  runErrorT $ do
     c <- either fail return (parse s file)
@@ -66,6 +48,28 @@ parse_js file modname = do
   case em of
     Right s -> return s
     Left e -> fail $ printf "error parsing %s. error:\n\t%s" file e
+  where
+    urs_line :: [(String,String)] -> String
+    urs_line ((n,nt):args) = printf "val %s : %s" (n++('_':nt)) (fmtargs args nt) where
+      fmtargs :: [(String,String)] -> String -> String
+      fmtargs ((an,at):as) ret = printf "%s -> %s" at (fmtargs as ret)
+      fmtargs ([]) ret = printf "transaction %s" ret
+
+    extractEmbeddedType :: (Monad m) => String -> m (String,String)
+    extractEmbeddedType [] = error "BUG: empty identifier"
+    extractEmbeddedType name = check . span (/= '_') $ name where
+      check (n,'_':t) = return (n,t)
+      check _ = fail $ printf "Can't extract the type from the identifier '%s'" name
+
+    findTopLevelFunctions top = map decls $ listify is_func top where
+      is_func n@(JSFunction a b c d e f) = True
+      is_func _ = False
+      decls (JSFunction a b c d e f) = (identifiers b) ++ (identifiers d)
+      identifiers x = map name $ listify ids x where
+        ids i@(JSIdentifier s) = True
+        ids _ = False
+        name (JSIdentifier n) = n
+      
 
 data Args = A
   { tgtdir :: FilePath
@@ -98,33 +102,64 @@ main = execParser opts >>= main_
           ,"file named FILE.urp as well as other files under the same directory" ])
       <> header "UrEmebed is the Ur/Web module generator" )
 
-exec_embed_sh env' = do
-  script <- getDataFileName "embed.sh"
-  env <- do
-    add <- forM ["PATH","CC","LD"] $ \n -> do
-      maybe Nothing (\x -> (Just (n,x))) <$> lookupEnv n
-    return $ (mapMaybe id add) ++ env'
-  (ho,_,herr,ph) <- runInteractiveProcess "sh" [script] Nothing (Just env)
-  code <- waitForProcess ph
-  when (code /= ExitSuccess) $ do
-    hGetContents herr >>= err
-    fail $ printf "%s failed to complete" script
-  return ()
+main_ (A tgt ui ins) = do
+  let mkname = upper1 . map under . takeFileName where
+        under c | c`elem`"_-. /" = '_'
+                | otherwise = c
+        upper1 [] = []
+        upper1 (x:xs) = (toUpper x) : xs
 
-main_ (A tgt ui [inf]) = do
-  let modname = (takeBaseName tgt)
-  let tgtdir = (takeDirectory tgt)
-  env <- do
-    let def = [ ("TGT",tgtdir)
-              , ("FILE",inf)
-              , ("URE_MODULE_NAME", modname)
-              , ("UR_INCLUDE", ui) ]
-    case (takeExtension inf) == ".js" of
-      True -> do
-        decls <- parse_js inf modname
-        return $ def ++ [ ("URE_JS_DECLS", unlines decls) ]
-      False -> return def
-  exec_embed_sh env
-main_ (A tgt ui _) = do
-  fail "UrEmbed requires one input file"
+  when (null ins) $ 
+    fail "At least one file should be specified"
+
+  let line s = tell (s++"\n")
+  writeFile tgt $ execWriter $ do
+    forM_ ins $ \inf -> do
+      line $ printf "library %s" (mkname inf)
+    line []
+    line "Static"
+
+  let datatype = execWriter $ do
+        tell "datatype content = "
+        tell (mkname (head ins))
+        forM_ (tail ins) (\f -> tell $ printf " | %s" (mkname f))
+
+  writeFile (replaceExtension tgt "urs") $ execWriter $ do
+    line datatype
+    line "val binary : content -> transaction blob"
+
+  writeFile (replaceExtension tgt "ur") $ execWriter $ do
+    line datatype
+    line "fun binary c = case c of"
+    line $ printf "      %s => %s.binary ()" (mkname (head ins)) (mkname (head ins))
+    forM_ (tail ins) (\f -> line $ printf "    | %s => %s.binary ()" (mkname f) (mkname f))
+
+  -- FIXME: the rest is implemented inside the shell script. It would be better
+  -- to do the whole job in Haskell, the fastets way is ..
+  forM_ ins $ \inf -> do
+    env <- do
+      let def = [ ("TGT", takeDirectory tgt)
+                , ("FILE",inf)
+                , ("URE_MODULE_NAME", mkname inf)
+                , ("UR_INCLUDE", ui) ]
+      case (takeExtension inf) == ".js" of
+        True -> do
+          decls <- parse_js inf
+          return $ def ++ [ ("URE_JS_DECLS", unlines decls) ]
+        False -> return def
+    exec_embed_sh env
+    where
+      exec_embed_sh env' = do
+        script <- getDataFileName "embed.sh"
+        env <- do
+          add <- forM ["PATH","CC","LD"] $ \n -> do
+            maybe Nothing (\x -> (Just (n,x))) <$> lookupEnv n
+          return $ (mapMaybe id add) ++ env'
+        (ho,_,herr,ph) <- runInteractiveProcess "sh" [script] Nothing (Just env)
+        code <- waitForProcess ph
+        when (code /= ExitSuccess) $ do
+          hGetContents herr >>= err
+          fail $ printf "%s failed to complete" script
+        return ()
+
 

@@ -20,7 +20,7 @@ msg "Creating temp dir $TMP"
 ff=$FILE
 
 if test -z "$URE_MODULE_NAME" ; then
-  msg "PATTERN is not defined" ; die
+  msg "URE_MODULE_NAME (PATTERN) is not defined" ; die
 fi
 f=$URE_MODULE_NAME
 

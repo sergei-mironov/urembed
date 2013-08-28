@@ -88,7 +88,7 @@ pargs = A
       (  long "urinclude"
       <> short 'I'
       <> metavar "DIR"
-      <> help "Path to the location of UrWeb's includes"
+      <> help "Custom location of the UrWeb's includes"
       <> value "/usr/local/include/urweb" )
   <*> arguments str ( metavar "FILE" <> help "File to embed" )
 
@@ -97,9 +97,14 @@ main = execParser opts >>= main_
   where
     opts = info (helper <*> pargs)
       (  fullDesc
-      <> progDesc (concat [
-          "Converts a FILE to the Ur/Web's module. Module will contain project "
-          ,"file named FILE.urp as well as other files under the same directory" ])
+      <> progDesc (unlines [
+            "Converts a FILE to the Ur/Web's module. The Module will contain a 'binary' "
+          , "  function returning the FILE as a blob. "
+          , " "
+          , "  Example: urembed -o static/Static.urp Style.css Script.js"
+          , " "
+          , "  Urembed honores CC and LD env vars used to call the C compiler and linker"
+          , "  respectively. gcc and ld are used by default" ])
       <> header "UrEmebed is the Ur/Web module generator" )
 
 main_ (A tgt ui ins) = do

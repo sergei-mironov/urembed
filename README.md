@@ -21,6 +21,24 @@ environment is required (Cygwin should suffice under Windows)
 Usage
 -----
 
+    $ urembed --help
+    UrEmebed is the Ur/Web module generator
+
+    Usage: urembed (-o|--output FILE.urp) [-I|--urinclude DIR] [FILE]
+      Converts a FILE to the Ur/Web's module. The Module will contain a 'binary' 
+      function returning the FILE as a blob. 
+     
+      Example: urembed -o static/Static.urp Style.css Script.js
+      urembed honores CC and LD env vars used to call the C compiler and linker
+      respectively
+
+
+    Available options:
+      -h,--help                Show this help text
+      -o,--output FILE.urp     Target Ur project file
+      -I,--urinclude DIR       Custom location of the UrWeb's includes
+      FILE
+
 ### Static files
 
 To embed Style.css into Ur/Web module, type

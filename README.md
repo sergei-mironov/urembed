@@ -54,5 +54,5 @@ format. For example:
 will be binded to Ur/Web's function
 
     # FILE.urs
-    val init_fun : css_class -> string -> transaction unit
+    val init_unit : css_class -> string -> transaction unit
 

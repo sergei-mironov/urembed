@@ -114,8 +114,26 @@ main_ (A tgt ui ins) = do
         upper1 [] = []
         upper1 (x:xs) = (toUpper x) : xs
 
-  when (null ins) $ 
+  when (null ins) $ do
     fail "At least one file should be specified"
+
+  when (not $ (map toLower $ takeExtension tgt) == ".urp") $ do
+    fail "Target file should have .urp extention"
+
+  -- FIXME: main part is implemented inside the shell script. It would be better
+  -- to do the whole job in Haskell, the fastets way is ..
+  forM_ ins $ \inf -> do
+    env <- do
+      let def = [ ("TGT", takeDirectory tgt)
+                , ("FILE",inf)
+                , ("URE_MODULE_NAME", mkname inf)
+                , ("UR_INCLUDE", ui) ]
+      case (takeExtension inf) == ".js" of
+        True -> do
+          decls <- parse_js inf
+          return $ def ++ [ ("URE_JS_DECLS", unlines decls) ]
+        False -> return def
+    exec_embed_sh env
 
   let line s = tell (s++"\n")
   writeFile tgt $ execWriter $ do
@@ -132,28 +150,19 @@ main_ (A tgt ui ins) = do
   writeFile (replaceExtension tgt "urs") $ execWriter $ do
     line datatype
     line "val binary : content -> transaction blob"
+    line "val blobpage : content -> transaction page"
 
   writeFile (replaceExtension tgt "ur") $ execWriter $ do
     line datatype
     line "fun binary c = case c of"
     line $ printf "      %s => %s.binary ()" (mkname (head ins)) (mkname (head ins))
     forM_ (tail ins) (\f -> line $ printf "    | %s => %s.binary ()" (mkname f) (mkname f))
+    line "fun blobpage c = case c of"
+    line $ printf "      %s => %s.blobpage ()" (mkname (head ins)) (mkname (head ins))
+    forM_ (tail ins) (\f -> line $ printf "    | %s => %s.blobpage ()" (mkname f) (mkname f))
 
-  -- FIXME: the rest is implemented inside the shell script. It would be better
-  -- to do the whole job in Haskell, the fastets way is ..
-  forM_ ins $ \inf -> do
-    env <- do
-      let def = [ ("TGT", takeDirectory tgt)
-                , ("FILE",inf)
-                , ("URE_MODULE_NAME", mkname inf)
-                , ("UR_INCLUDE", ui) ]
-      case (takeExtension inf) == ".js" of
-        True -> do
-          decls <- parse_js inf
-          return $ def ++ [ ("URE_JS_DECLS", unlines decls) ]
-        False -> return def
-    exec_embed_sh env
     where
+
       exec_embed_sh env' = do
         script <- getDataFileName "embed.sh"
         env <- do

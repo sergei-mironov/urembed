@@ -21,7 +21,7 @@ environment is required (Cygwin should suffice under Windows)
 Usage
 -----
 
-=== Static files ===
+### Static files
 
 To embed Style.css into Ur/Web module, type
 
@@ -41,7 +41,7 @@ Particularly, that is how to serve the blob to the user:
       b <- Static.binary Static.Style_css;
       returnBlob b (blessMime "text/css")
 
-=== JavaScript FFI helper ===
+### JavaScript FFI helper
 
 Urembed is able to bind top-level JavaScript functions via
 JavaScript FFI. In order to do it, user has to make sure that FILE has .js

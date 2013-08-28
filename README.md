@@ -1,7 +1,9 @@
 UrEmbed
 -------
 
-Embeds a file as a blob to the Ur/Web project
+Embeds file(s) into the Ur/Web project by creating the module providing function
+
+    val binary : unit -> transaction blob
 
 
 Installation
@@ -19,24 +21,25 @@ Usage
 
 To embed Style.css into Ur/Web module, type
 
-    $ urembed -o lib/autogen/Style_css.urp Style.css
+    $ urembed -o lib/autogen/Static.urp Style.css
 
-From the Ur/Web project you will need to add Style\_css library and use the
-provided function
+From the Ur/Web project you will need to add Static in your main .urp library
+and use the binary function:
 
-    # Style_css.urs
-    val binary : unit -> transaction blob
+    # Static.urs
+    datatype content = Style_css
+    val binary : content -> transaction blob
 
-Particularly, we now can serve the blob to the user:
+Particularly, that is how to serve the blob to the user:
 
     # Main.ur
     fun serve_css a =
-      b <- Style_css.binary ();
+      b <- Static.binary Static.Style_css;
       returnBlob b (blessMime "text/css")
 
 Additionally, urembed is able to bind top-level JavaScript functions via
 JavaScript FFI. In order to do it, user has to make sure that FILE has .js
-extention and contains top-level functions named according to the 'name\_type'
+extension and contains top-level functions named according to the 'name\_type'
 format. For example:
     
     # FILE.js

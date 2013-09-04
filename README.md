@@ -16,6 +16,8 @@ environment is required (Cygwin should suffice under Windows)
 
     $ git clone https://github.com/grwlf/urembed
     $ cd urembed
+    $ cabal configure
+    $ cabal build
     $ cabal install
 
 Usage

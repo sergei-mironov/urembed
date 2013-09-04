@@ -11,8 +11,9 @@ Additionally, Urembed greatly simplifies writing of the JavaScript FFIs.
 Installation
 ------------
 
-You will need Haskell Platform and several additional packages. Also, POSIX
-environment is required (Cygwin should suffice under Windows)
+You will need [http://www.haskell.org/platform/](Haskell platform) and several
+additional packages. Also, POSIX environment is required (Cygwin should suffice
+under Windows)
 
     $ git clone https://github.com/grwlf/urembed
     $ cd urembed

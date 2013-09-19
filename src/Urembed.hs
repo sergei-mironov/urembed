@@ -12,6 +12,7 @@ import System.Exit
 import System.IO
 import System.FilePath
 import System.Directory
+import System.Info
 import Network.Mime
 import Text.Printf
 import Data.Either
@@ -139,9 +140,14 @@ pargs = A
       <> short 'c'
       <> metavar "FILE"
       <> help "Path to the GNU C compiler"
-      <> value "" )
+      <> value osdefgcc)
   <*> flag False True ( long "version" <> help "Show version information" )
   <*> arguments str ( metavar "FILE" <> help "File to embed" )
+  where
+    osdefgcc | isInfixOf "linux" os = "/usr/bin/gcc"
+             | isInfixOf "windows" os = "c:\\cygwin\\usr\\bin\\gcc"
+             | otherwise = "/usr/local/bin/gcc"
+
 
 main :: IO ()
 main = execParser opts >>= main_

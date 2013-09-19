@@ -2,7 +2,7 @@
 -- documentation, see http://haskell.org/cabal/users-guide/
 
 name:                urembed
-version:             0.1.0.0
+version:             0.3.0.0
 -- synopsis:            
 -- description:         
 homepage:            http://github.com/grwlf/urembed
@@ -14,12 +14,11 @@ maintainer:          grrwlf@gmail.com
 category:            Development
 build-type:          Simple
 cabal-version:       >=1.8
-data-dir:            src
-data-files:          embed.sh
 
 executable urembed
   main-is:             Urembed.hs
   -- other-modules:       
   build-depends:       base, mtl, language-javascript ==0.5.*, process,
-                       filepath, syb, optparse-applicative
+                       filepath, syb, optparse-applicative, directory,
+                       mime-types, text, bytestring
   hs-source-dirs:      src

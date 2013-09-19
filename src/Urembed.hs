@@ -11,6 +11,8 @@ import System.Process
 import System.Exit
 import System.IO
 import System.FilePath
+import System.Directory
+import Network.Mime
 import Text.Printf
 import Data.Either
 import Data.Generics
@@ -19,9 +21,11 @@ import Data.List
 import Data.Data
 import Data.Typeable
 import Data.Maybe
+import Data.String
+import qualified Data.Text as T
+import qualified Data.ByteString.Char8 as BS
 
 import Options.Applicative
-import Paths_urembed
 
 io :: (MonadIO m) => IO a -> m a
 io = liftIO
@@ -33,47 +37,86 @@ err,out :: (MonadIO m) => String -> m ()
 err = hio stderr
 out = hio stdout
 
+
+span2 :: String -> String -> Maybe (String,String)
+span2 inf s = span' [] s where
+  span' _ [] = Nothing
+  span' acc (c:cs)
+    | isPrefixOf inf (c:cs) = Just (acc, drop (length inf) (c:cs))
+    | otherwise = span' (acc++[c]) cs
+
+data JSFunc = JSFunc {
+    urdecl :: String
+  , urname :: String
+  , jsname :: String
+  } deriving(Show)
+
+data JSType = JSType {
+    urtdecl :: String
+  } deriving(Show)
+
 -- | Parse the JavaScript file, extract top-level functions, convert their
 -- signatures into Ur/Web format, return them as the list of strings
-parse_js :: FilePath -> IO [String]
+parse_js :: FilePath -> IO (Either String ([JSType],[JSFunc]))
 parse_js file = do
   s <- readFile file
-  em <-  runErrorT $ do
+  runErrorT $ do
     c <- either fail return (parse s file)
-    forM (findTopLevelFunctions c) $ \f@(fn:_) -> (do
-      urs_line <$> mapM extractEmbeddedType f
+    f <- concat <$> (forM (findTopLevelFunctions c) $ \f@(fn:_) -> (do
+      ts <- mapM extractEmbeddedType (f`zip`(False:repeat True))
+      let urdecl_ = urs_line ts
+      let urname_ = (fst (head ts))
+      let jsname_ = fn
+      return [JSFunc urdecl_ urname_ jsname_]
       ) `catchError` (\(e::String) -> do
         err $ printf "ignoring function %s, reason:\n\t%s" fn e
-        return [])
-  case em of
-    Right s -> return s
-    Left e -> fail $ printf "error parsing %s. error:\n\t%s" file e
+        return []))
+    t <- concat <$> (forM (findTopLevelVars c) $ \vn -> (do
+      (n,t) <- extractEmbeddedType (vn,False)
+      return [JSType $ printf "type %s" t]
+      )`catchError`  (\(e::String) -> do
+        err $ printf "ignoring variable %s, reason:\n\t%s" vn e
+        return []))
+
+    return (t,f)
+
   where
     urs_line :: [(String,String)] -> String
-    urs_line ((n,nt):args) = printf "val %s : %s" (n++('_':nt)) (fmtargs args nt) where
+    urs_line [] = error "wrong function signature"
+    urs_line ((n,nt):args) = printf "val %s : %s" n (fmtargs args nt) where
       fmtargs :: [(String,String)] -> String -> String
       fmtargs ((an,at):as) ret = printf "%s -> %s" at (fmtargs as ret)
       fmtargs ([]) ret = printf "transaction %s" ret
 
-    extractEmbeddedType :: (Monad m) => String -> m (String,String)
-    extractEmbeddedType [] = error "BUG: empty identifier"
-    extractEmbeddedType name = check . span (/= '_') $ name where
-      check (n,'_':t) = return (n,t)
-      check _ = fail $ printf "Can't extract the type from the identifier '%s'" name
+    extractEmbeddedType :: (Monad m) => (String,Bool) -> m (String,String)
+    extractEmbeddedType ([],_) = error "BUG: empty identifier"
+    extractEmbeddedType (name,fallback) = check (msum [span2  "__" name , span2 "_as_" name]) where
+      check (Just (n,t)) = return (n,t)
+      check _ | fallback == True = return (name,name)
+              | fallback == False = fail $ printf "Can't extract the type from the identifier '%s'" name
 
+    findTopLevelFunctions :: JSNode -> [[String]]
     findTopLevelFunctions top = map decls $ listify is_func top where
       is_func n@(JSFunction a b c d e f) = True
       is_func _ = False
       decls (JSFunction a b c d e f) = (identifiers b) ++ (identifiers d)
-      identifiers x = map name $ listify ids x where
-        ids i@(JSIdentifier s) = True
-        ids _ = False
-        name (JSIdentifier n) = n
+
+    findTopLevelVars :: JSNode -> [String]
+    findTopLevelVars top = map decls $ listify is_var top where
+      is_var n@(JSVarDecl a []) = True
+      is_var _ = False
+      decls (JSVarDecl a _) = (head $ identifiers a);
       
+    identifiers x = map name $ listify ids x where
+      ids i@(JSIdentifier s) = True
+      ids _ = False
+      name (JSIdentifier n) = n
 
 data Args = A
   { tgtdir :: FilePath
   , urinclude :: FilePath
+  , cc :: FilePath
+  , version :: Bool
   , files :: [FilePath]
   }
 
@@ -83,13 +126,21 @@ pargs = A
       (  long "output"
       <> short 'o'
       <> metavar "FILE.urp"
-      <> help "Target Ur project file" )
+      <> help "Target Ur project file"
+      <> value "")
   <*> strOption
       (  long "urinclude"
       <> short 'I'
       <> metavar "DIR"
       <> help "Custom location of the UrWeb's includes"
       <> value "/usr/local/include/urweb" )
+  <*> strOption
+      (  long "cc"
+      <> short 'c'
+      <> metavar "FILE"
+      <> help "Path to the GNU C compiler"
+      <> value "" )
+  <*> flag False True ( long "version" <> help "Show version information" )
   <*> arguments str ( metavar "FILE" <> help "File to embed" )
 
 main :: IO ()
@@ -107,35 +158,128 @@ main = execParser opts >>= main_
           , "  respectively. gcc and ld are used by default" ])
       <> header "UrEmebed is the Ur/Web module generator" )
 
-main_ (A tgt ui ins) = do
-  let mkname = upper1 . map under . takeFileName where
-        under c | c`elem`"_-. /" = '_'
-                | otherwise = c
-        upper1 [] = []
-        upper1 (x:xs) = (toUpper x) : xs
+main_ (A tgt ui cc True ins) = do
+  hPutStrLn stderr "urembed version 0.2.0.0"
+
+main_ (A tgt ui cc False ins) = do
+
+  when (null tgt) $ do
+    fail "Exactly one output file should be specified, use -o"
 
   when (null ins) $ do
-    fail "At least one file should be specified"
+    fail "At least one file should be specified, see --help"
 
   when (not $ (map toLower $ takeExtension tgt) == ".urp") $ do
     fail "Target file should have .urp extention"
 
-  -- FIXME: main part is implemented inside the shell script. It would be better
-  -- to do the whole job in Haskell, the fastets way is ..
-  forM_ ins $ \inf -> do
-    env <- do
-      let def = [ ("TGT", takeDirectory tgt)
-                , ("FILE",inf)
-                , ("URE_MODULE_NAME", mkname inf)
-                , ("UR_INCLUDE", ui) ]
-      case (takeExtension inf) == ".js" of
-        True -> do
-          decls <- parse_js inf
-          return $ def ++ [ ("URE_JS_DECLS", unlines decls) ]
-        False -> return def
-    exec_embed_sh env
+  when (null cc) $ do
+    fail "GNU C compiler is required"
 
-  let line s = tell (s++"\n")
+  let checkexe f = do
+        pcc <- getPermissions f
+        when (not $ executable pcc) $ do
+          fail $ printf "%s is not an executable" f
+
+  checkexe cc
+
+  let ld = takeDirectory cc </> "ld"
+
+  checkexe ld
+
+  let indest n = (takeDirectory tgt) </> n
+  let write n wr = writeFile (indest n) $ execWriter $ wr
+
+  forM_ ins $ \inf -> do
+    let modname = (mkname inf)
+    let modname_c = modname ++ "_c"
+    let modname_js = modname ++ "_js"
+    let mime = BS.unpack (defaultMimeLookup (fromString inf))
+
+    -- Module_c.urp
+    let binfunc = printf "uw_%s_binary" modname_c
+
+    write (replaceExtension modname_c ".urs") $ do
+      line $ "val binary : unit -> transaction blob"
+
+    let csrc = replaceExtension modname_c ".c"
+    write csrc $ do
+      line $ "// Thanks, http://stupefydeveloper.blogspot.ru/2008/08/cc-embed-binary-data-into-elf.html"
+      line $ "#include <urweb.h>"
+      line $ "#include <stdio.h>"
+      let start = printf "_binary_%s_start" modname_c
+      let size = printf "_binary_%s_size" modname_c
+      line $ "extern int " ++ size  ++ ";"
+      line $ "extern int " ++ start ++ ";"
+      line $ "uw_Basis_blob " ++ binfunc ++ " (uw_context ctx, uw_unit unit)"
+      line $ "{"
+      line $ "  uw_Basis_blob blob;"
+      line $ "  blob.data = (char*)&" ++ start ++ ";"
+      line $ "  blob.size = (size_t)&" ++ size ++ ";"
+      line $ "  return blob;"
+      line $ "}"
+
+    let header = (replaceExtension modname_c ".h")
+    write header $ do
+      line $ "#include <urweb.h>"
+      line $ "uw_Basis_blob " ++ binfunc ++ " (uw_context ctx, uw_unit unit);"
+
+    let binobj = replaceExtension modname_c ".o"
+    let dataobj = replaceExtension modname_c ".data.o"
+
+    write (replaceExtension modname_c ".urp") $ do
+      line $ "ffi " ++ modname_c
+      line $ "include " ++ header
+      line $ "link " ++ binobj
+      line $ "link " ++ dataobj
+
+    process [cc,"-c","-I",ui,"-o", indest binobj, indest csrc]
+
+    -- Copy the file to the target dir and run linker from there. Thus the names
+    -- it places will be correct (see start,size in _c)
+    copyFile inf (indest modname_c)
+    process' (Just (takeDirectory tgt)) [ld,"-r","-b","binary","-o",dataobj, modname_c]
+
+    -- Module_js.urp
+    (jstypes,jsdecls) <- if ((takeExtension inf) == ".js") then do
+                            e <- parse_js inf
+                            case e of
+                              Left e -> do
+                                err e
+                                return ([],[])
+                              Right decls -> do
+                                -- err (show decls)
+                                return decls
+                         else
+                            return ([],[])
+
+    write (replaceExtension modname_js ".urs") $ do
+      forM_ jstypes $ \decl -> line (urtdecl decl)
+      forM_ jsdecls $ \decl -> line (urdecl decl)
+
+    write (replaceExtension modname_js ".urp") $ do
+      line $ "ffi " ++ modname_js
+      forM_ jsdecls $ \decl ->
+        line $ printf "jsFunc %s.%s = %s" modname_js (urname decl) (jsname decl)
+    
+    -- Module.urp
+    write (replaceExtension modname ".urs") $ do
+      line $ "val binary : unit -> transaction blob"
+      line $ "val blobpage : unit -> transaction page"
+      forM_ jstypes $ \decl -> line (urtdecl decl)
+      forM_ jsdecls $ \d -> line (urdecl d)
+
+    write (replaceExtension modname ".ur") $ do
+      line $ "val binary = " ++ modname_c ++ ".binary"
+      forM_ jsdecls $ \d ->
+        line $ printf "val %s = %s.%s" (urname d) modname_js (urname d)
+      line $ printf "fun blobpage {} = b <- binary () ; returnBlob b (blessMime \"%s\")" mime
+
+    write (replaceExtension modname ".urp") $ do
+      line $ "library " ++ modname_c
+      line $ "library " ++ modname_js
+      line $ ""
+      line $ modname
+
   writeFile tgt $ execWriter $ do
     forM_ ins $ \inf -> do
       line $ printf "library %s" (mkname inf)
@@ -156,24 +300,30 @@ main_ (A tgt ui ins) = do
     line datatype
     line "fun binary c = case c of"
     line $ printf "      %s => %s.binary ()" (mkname (head ins)) (mkname (head ins))
-    forM_ (tail ins) (\f -> line $ printf "    | %s => %s.binary ()" (mkname f) (mkname f))
+    forM_ (tail ins) (\f -> line $
+          printf "    | %s => %s.binary ()" (mkname f) (mkname f))
     line "fun blobpage c = case c of"
     line $ printf "      %s => %s.blobpage ()" (mkname (head ins)) (mkname (head ins))
-    forM_ (tail ins) (\f -> line $ printf "    | %s => %s.blobpage ()" (mkname f) (mkname f))
+    forM_ (tail ins) (\f -> line $
+           printf "    | %s => %s.blobpage ()" (mkname f) (mkname f))
 
     where
 
-      exec_embed_sh env' = do
-        script <- getDataFileName "embed.sh"
-        env <- do
-          add <- forM ["PATH","CC","LD"] $ \n -> do
-            maybe Nothing (\x -> (Just (n,x))) <$> lookupEnv n
-          return $ (mapMaybe id add) ++ env'
-        (ho,_,herr,ph) <- runInteractiveProcess "sh" [script] Nothing (Just env)
+      line s = tell (s++"\n")
+      
+      process = process' Nothing
+      process' wd args = do
+        (_,hout,herr,ph) <- runInteractiveProcess (head args) (tail args) wd Nothing
         code <- waitForProcess ph
         when (code /= ExitSuccess) $ do
-          hGetContents herr >>= err
-          fail $ printf "%s failed to complete" script
+          hGetContents hout >>= hPutStrLn stderr
+          hGetContents herr >>= hPutStrLn stderr 
+          fail $ printf "process %s failed to complete with %s" (show args) (show code)
         return ()
 
+      mkname = upper1 . map under . takeFileName where
+        under c | c`elem`"_-. /" = '_'
+                | otherwise = c
+        upper1 [] = []
+        upper1 (x:xs) = (toUpper x) : xs
 

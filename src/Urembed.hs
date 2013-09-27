@@ -115,6 +115,7 @@ parse_js file = do
 
 data Args = A
   { tgtdir :: FilePath
+  , dict :: String
   , urinclude :: FilePath
   , cc :: FilePath
   , version :: Bool
@@ -126,8 +127,14 @@ pargs = A
   <$> strOption
       (  long "output"
       <> short 'o'
-      <> metavar "FILE.urp"
-      <> help "Target Ur project file"
+      <> metavar "DIR"
+      <> help "Directory to place output files to"
+      <> value "")
+  <*> strOption
+      (  long "make-dict"
+      <> short 'd'
+      <> metavar "NAME"
+      <> help "Generate a dictionary NAME.urp redirecting binary/blob functions to other modules"
       <> value "")
   <*> strOption
       (  long "urinclude"
@@ -158,25 +165,26 @@ main = execParser opts >>= main_
             "Converts a FILE to the Ur/Web's module. The Module will contain a 'binary' "
           , "  function returning the FILE as a blob. "
           , " "
-          , "  Example: urembed -o static/Static.urp Style.css Script.js"
+          , "  Example: urembed -o static -d Static.urp Style.css Script.js"
           , " "
           , "  Urembed honores CC and LD env vars used to call the C compiler and linker"
           , "  respectively. gcc and ld are used by default" ])
       <> header "UrEmebed is the Ur/Web module generator" )
 
-main_ (A tgt ui cc True ins) = do
-  hPutStrLn stderr "urembed version 0.2.0.0"
+main_ (A tgt _ ui cc True ins) = do
+  hPutStrLn stderr "urembed version 0.4.0.0"
 
-main_ (A tgt ui cc False ins) = do
+main_ (A tgtdir dict ui cc False ins) = do
 
-  when (null tgt) $ do
-    fail "Exactly one output file should be specified, use -o"
+  when (null tgtdir) $ do
+    fail "An output directory should be specified, use -o"
 
   when (null ins) $ do
     fail "At least one file should be specified, see --help"
 
-  when (not $ (map toLower $ takeExtension tgt) == ".urp") $ do
-    fail "Target file should have .urp extention"
+  exists <- doesDirectoryExist tgtdir
+  when (not exists) $ do
+    fail "Output is not a directory"
 
   when (null cc) $ do
     fail "GNU C compiler is required"
@@ -192,7 +200,7 @@ main_ (A tgt ui cc False ins) = do
 
   checkexe ld
 
-  let indest n = (takeDirectory tgt) </> n
+  let indest n = tgtdir </> n
   let write n wr = writeFile (indest n) $ execWriter $ wr
 
   forM_ ins $ \inf -> do
@@ -203,9 +211,11 @@ main_ (A tgt ui cc False ins) = do
 
     -- Module_c.urp
     let binfunc = printf "uw_%s_binary" modname_c
+    let textfunc = printf "uw_%s_text" modname_c
 
     write (replaceExtension modname_c ".urs") $ do
       line $ "val binary : unit -> transaction blob"
+      line $ "val text : unit -> transaction string"
 
     let csrc = replaceExtension modname_c ".c"
     write csrc $ do
@@ -223,11 +233,28 @@ main_ (A tgt ui cc False ins) = do
       line $ "  blob.size = (size_t)&" ++ size ++ ";"
       line $ "  return blob;"
       line $ "}"
+      line $ ""
+      line $ "uw_Basis_string " ++ textfunc ++ " (uw_context ctx, uw_unit unit) {"
+      line $ "  char* data = (char*)&" ++ start ++ ";"
+      line $ "  size_t size = (size_t)&" ++ size ++ ";"
+      line $ "  char * c = uw_malloc(ctx, size+1);"
+      line $ "  char * write = c;"
+      line $ "  int i;"
+      line $ "  for (i = 0; i < size; i++) {"
+      line $ "    *write =  data[i];"
+      line $ "    if (*write == '\\0')"
+      line $ "    *write = '\\n';"
+      line $ "    *write++;"
+      line $ "  }"
+      line $ "  *write=0;"
+      line $ "  return c;"
+      line $ "  }"
 
     let header = (replaceExtension modname_c ".h")
     write header $ do
       line $ "#include <urweb.h>"
       line $ "uw_Basis_blob " ++ binfunc ++ " (uw_context ctx, uw_unit unit);"
+      line $ "uw_Basis_string " ++ textfunc ++ " (uw_context ctx, uw_unit unit);"
 
     let binobj = replaceExtension modname_c ".o"
     let dataobj = replaceExtension modname_c ".data.o"
@@ -243,7 +270,7 @@ main_ (A tgt ui cc False ins) = do
     -- Copy the file to the target dir and run linker from there. Thus the names
     -- it places will be correct (see start,size in _c)
     copyFile inf (indest modname_c)
-    process' (Just (takeDirectory tgt)) [ld,"-r","-b","binary","-o",dataobj, modname_c]
+    process' (Just (tgtdir)) [ld,"-r","-b","binary","-o",dataobj, modname_c]
 
     -- Module_js.urp
     (jstypes,jsdecls) <- if ((takeExtension inf) == ".js") then do
@@ -270,12 +297,14 @@ main_ (A tgt ui cc False ins) = do
     -- Module.urp
     write (replaceExtension modname ".urs") $ do
       line $ "val binary : unit -> transaction blob"
+      line $ "val text : unit -> transaction string"
       line $ "val blobpage : unit -> transaction page"
       forM_ jstypes $ \decl -> line (urtdecl decl)
       forM_ jsdecls $ \d -> line (urdecl d)
 
     write (replaceExtension modname ".ur") $ do
       line $ "val binary = " ++ modname_c ++ ".binary"
+      line $ "val text = " ++ modname_c ++ ".text"
       forM_ jsdecls $ \d ->
         line $ printf "val %s = %s.%s" (urname d) modname_js (urname d)
       line $ printf "fun blobpage {} = b <- binary () ; returnBlob b (blessMime \"%s\")" mime
@@ -286,32 +315,39 @@ main_ (A tgt ui cc False ins) = do
       line $ ""
       line $ modname
 
-  writeFile tgt $ execWriter $ do
-    forM_ ins $ \inf -> do
-      line $ printf "library %s" (mkname inf)
-    line []
-    line "Static"
+  when (not (null dict)) $ do
+    let tgt = tgtdir </> (replaceExtension dict ".urp")
+    writeFile tgt $ execWriter $ do
+      forM_ ins $ \inf -> do
+        line $ printf "library %s" (mkname inf)
+      line []
+      line "Static"
 
-  let datatype = execWriter $ do
-        tell "datatype content = "
-        tell (mkname (head ins))
-        forM_ (tail ins) (\f -> tell $ printf " | %s" (mkname f))
+    let datatype = execWriter $ do
+          tell "datatype content = "
+          tell (mkname (head ins))
+          forM_ (tail ins) (\f -> tell $ printf " | %s" (mkname f))
 
-  writeFile (replaceExtension tgt "urs") $ execWriter $ do
-    line datatype
-    line "val binary : content -> transaction blob"
-    line "val blobpage : content -> transaction page"
+    writeFile (replaceExtension tgt "urs") $ execWriter $ do
+      line datatype
+      line "val binary : content -> transaction blob"
+      line "val text : content -> transaction string"
+      line "val blobpage : content -> transaction page"
 
-  writeFile (replaceExtension tgt "ur") $ execWriter $ do
-    line datatype
-    line "fun binary c = case c of"
-    line $ printf "      %s => %s.binary ()" (mkname (head ins)) (mkname (head ins))
-    forM_ (tail ins) (\f -> line $
-          printf "    | %s => %s.binary ()" (mkname f) (mkname f))
-    line "fun blobpage c = case c of"
-    line $ printf "      %s => %s.blobpage ()" (mkname (head ins)) (mkname (head ins))
-    forM_ (tail ins) (\f -> line $
-           printf "    | %s => %s.blobpage ()" (mkname f) (mkname f))
+    writeFile (replaceExtension tgt "ur") $ execWriter $ do
+      line datatype
+      line "fun binary c = case c of"
+      line $ printf "      %s => %s.binary ()" (mkname (head ins)) (mkname (head ins))
+      forM_ (tail ins) (\f -> line $
+            printf "    | %s => %s.binary ()" (mkname f) (mkname f))
+      line "fun blobpage c = case c of"
+      line $ printf "      %s => %s.blobpage ()" (mkname (head ins)) (mkname (head ins))
+      forM_ (tail ins) (\f -> line $
+             printf "    | %s => %s.blobpage ()" (mkname f) (mkname f))
+      line "fun text c = case c of"
+      line $ printf "      %s => %s.text ()" (mkname (head ins)) (mkname (head ins))
+      forM_ (tail ins) (\f -> line $
+             printf "    | %s => %s.text ()" (mkname f) (mkname f))
 
     where
 

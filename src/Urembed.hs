@@ -1,3 +1,4 @@
+{-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE ImpredicativeTypes #-}
 module Main where
@@ -25,6 +26,11 @@ import Data.Maybe
 import Data.String
 import qualified Data.Text as T
 import qualified Data.ByteString.Char8 as BS
+
+import qualified Development.Cake3 as C3
+import Development.Cake3(runMake,makevar,cmd,rule)
+import qualified Development.Cake3.Rules.UrWeb as C3
+import Development.Cake3.Rules.UrWeb (Config(..), urdeps)
 
 import Options.Applicative
 
@@ -172,7 +178,7 @@ main = execParser opts >>= main_
       <> header "UrEmebed is the Ur/Web module generator" )
 
 main_ (A tgt _ ui cc True ins) = do
-  hPutStrLn stderr "urembed version 0.4.0.0"
+  hPutStrLn stderr "urembed version 0.5.0.0"
 
 main_ (A tgtdir dict ui cc False ins) = do
 
@@ -204,8 +210,11 @@ main_ (A tgtdir dict ui cc False ins) = do
   let write n wr = writeFile (indest n) $ execWriter $ wr
 
   forM_ ins $ \inf -> do
+    hPutStrLn stderr (printf "Processing %s" inf)
+
     let modname = (mkname inf)
     let modname_c = modname ++ "_c"
+    let blobname = modname ++ "_c_blob"
     let modname_js = modname ++ "_js"
     let mime = BS.unpack (defaultMimeLookup (fromString inf))
 
@@ -222,8 +231,8 @@ main_ (A tgtdir dict ui cc False ins) = do
       line $ "// Thanks, http://stupefydeveloper.blogspot.ru/2008/08/cc-embed-binary-data-into-elf.html"
       line $ "#include <urweb.h>"
       line $ "#include <stdio.h>"
-      let start = printf "_binary_%s_start" modname_c
-      let size = printf "_binary_%s_size" modname_c
+      let start = printf "_binary___%s_start" blobname
+      let size = printf "_binary___%s_size" blobname
       line $ "extern int " ++ size  ++ ";"
       line $ "extern int " ++ start ++ ";"
       line $ "uw_Basis_blob " ++ binfunc ++ " (uw_context ctx, uw_unit unit)"
@@ -265,12 +274,12 @@ main_ (A tgtdir dict ui cc False ins) = do
       line $ "link " ++ binobj
       line $ "link " ++ dataobj
 
-    process [cc,"-c","-I",ui,"-o", indest binobj, indest csrc]
+    -- process [cc,"-c","-I",ui,"-o", indest binobj, indest csrc]
 
     -- Copy the file to the target dir and run linker from there. Thus the names
     -- it places will be correct (see start,size in _c)
-    copyFile inf (indest modname_c)
-    process' (Just (tgtdir)) [ld,"-r","-b","binary","-o",dataobj, modname_c]
+    copyFile inf (indest blobname)
+    -- process' (Just (tgtdir)) [ld,"-r","-b","binary","-o",dataobj, modname_c]
 
     -- Module_js.urp
     (jstypes,jsdecls) <- if ((takeExtension inf) == ".js") then do
@@ -316,25 +325,30 @@ main_ (A tgtdir dict ui cc False ins) = do
       line $ modname
 
   when (not (null dict)) $ do
-    let tgt = tgtdir </> (replaceExtension dict ".urp")
+    let tgtf = (replaceExtension dict ".urp.in")
+    let tgtf2 = (replaceExtension dict ".urp")
+    let tgt = tgtdir </> tgtf
+
     writeFile tgt $ execWriter $ do
       forM_ ins $ \inf -> do
         line $ printf "library %s" (mkname inf)
       line []
       line "Static"
 
+    let replaceExtensions f x = addExtension (dropExtensions f) x
+
     let datatype = execWriter $ do
           tell "datatype content = "
           tell (mkname (head ins))
           forM_ (tail ins) (\f -> tell $ printf " | %s" (mkname f))
 
-    writeFile (replaceExtension tgt "urs") $ execWriter $ do
+    writeFile (replaceExtensions tgt "urs") $ execWriter $ do
       line datatype
       line "val binary : content -> transaction blob"
       line "val text : content -> transaction string"
       line "val blobpage : content -> transaction page"
 
-    writeFile (replaceExtension tgt "ur") $ execWriter $ do
+    writeFile (replaceExtensions tgt "ur") $ execWriter $ do
       line datatype
       line "fun binary c = case c of"
       line $ printf "      %s => %s.binary ()" (mkname (head ins)) (mkname (head ins))
@@ -348,6 +362,34 @@ main_ (A tgtdir dict ui cc False ins) = do
       line $ printf "      %s => %s.text ()" (mkname (head ins)) (mkname (head ins))
       forM_ (tail ins) (\f -> line $
              printf "    | %s => %s.text ()" (mkname f) (mkname f))
+
+    setCurrentDirectory tgtdir
+    mtext <- runMake $ do
+      let file x = C3.file' tgtdir tgtdir x
+      let urp_in = file tgtf
+      let urp = file tgtf2
+      let cc_ = makevar "CC" cc
+      let ld_ = makevar "LD" ld
+      let (.=) = C3.replaceExtension
+
+      urp_in_r <- liftIO $ C3.ruleM urp_in $ do
+        flip urdeps urp_in (
+          Config (\f -> rule f $ do
+            let blob = C3.fromFilePath . (++"_blob") . C3.dropExtensions . C3.toFilePath $ f :: C3.File
+            case isInfixOf "data" (C3.takeExtensions f) of
+              True -> C3.shell [cmd| $(ld_) -r -b binary -o $f $blob |]
+              False -> C3.shell [cmd| $(cc_) -c -I $(C3.string ui) -o $f $(f.="c") |]
+          ))
+      urp_r <- liftIO $ C3.ruleM urp $do
+        C3.shell [cmd|cp $(urp_in_r) $urp |]
+
+      C3.place urp_r
+        
+
+    let tgtmk = "Makefile"
+    writeFile tgtmk mtext
+
+    hPutStrLn stderr "Done"
 
     where
 

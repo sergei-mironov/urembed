@@ -2,7 +2,7 @@
 -- documentation, see http://haskell.org/cabal/users-guide/
 
 name:                urembed
-version:             0.4.0.0
+version:             0.5.0.0
 -- synopsis:            
 -- description:         
 homepage:            http://github.com/grwlf/urembed
@@ -20,5 +20,5 @@ executable urembed
   -- other-modules:       
   build-depends:       base, mtl, language-javascript ==0.5.*, process,
                        filepath, syb, optparse-applicative, directory,
-                       mime-types, text, bytestring
+                       mime-types, text, bytestring, thirdcake
   hs-source-dirs:      src

@@ -35,6 +35,8 @@ import Development.Cake3.Rules.UrWeb (Config(..), urdeps,defaultConfig)
 
 import Options.Applicative
 
+import Paths_urembed
+
 io :: (MonadIO m) => IO a -> m a
 io = liftIO
 
@@ -131,8 +133,8 @@ pargs = A
   <$> strOption
       (  long "output"
       <> short 'o'
-      <> metavar "DIR"
-      <> help "Directory to place output files to"
+      <> metavar "FILE.urp"
+      <> help "Name of the Ur/Web project being generated"
       <> value "")
   <*> flag False True ( long "version" <> help "Show version information" )
   <*> arguments str ( metavar "FILE" <> help "File to embed" )
@@ -142,26 +144,24 @@ pargs = A
              | otherwise = "/usr/local/bin/gcc"
 
 
-main :: IO ()
-main = execParser opts >>= main_
-  where
-    opts = info (helper <*> pargs)
-      (  fullDesc
-      <> progDesc (unlines [
-            "Converts FILES to the Ur/Web's modules. Each Module will contain a 'binary' "
-          , "  function returning the FILE as a blob. "
-          , " "
-          , "  Example: urembed -o src/static Style.css Script.js"
-          , " "
-          , "  Output directory will contain a set of files including the Makefile containing"
-          , "  `lib' rule."
-          ])
-      <> header "UrEmebed is the Ur/Web module generator" )
+replaceExtensions f x = addExtension (dropExtensions f) x
+f .= x = replaceExtensions f x
 
-main_ (A tgtdir True ins) = do
+main :: IO ()
+main = do
+  h <- (getDataFileName >=> readFile) "Help.txt" 
+  main_ =<< execParser (
+    info (helper <*> pargs)
+      (  fullDesc
+      <> progDesc h
+      <> header "UrEmebed is the Ur/Web module generator" ))
+
+main_ (A tgturp True ins) = do
   hPutStrLn stderr "urembed version 0.5.0.0"
 
-main_ (A tgtdir False ins) = do
+main_ (A tgturp False ins) = do
+
+  let tgtdir = takeDirectory tgturp
 
   when (null tgtdir) $ do
     fail "An output directory should be specified, use -o"
@@ -289,15 +289,13 @@ main_ (A tgtdir False ins) = do
       line $ modname
 
   -- Static.urp
-  let tgt_in = indest "Static.urp.in"
+  let tgt_in = replaceExtensions tgturp ".urp.in"
 
   writeFile tgt_in $ execWriter $ do
     forM_ ins $ \inf -> do
       line $ printf "library %s" (mkname inf)
     line []
-    line "Static"
-
-  let replaceExtensions f x = addExtension (dropExtensions f) x
+    line (takeBaseName tgturp)
 
   let datatype = execWriter $ do
         tell "datatype content = "
@@ -327,19 +325,19 @@ main_ (A tgtdir False ins) = do
 
   -- Build the Makefile
   setCurrentDirectory tgtdir
-  writeFile "Makefile" =<< (mdo
+  writeFile ((takeBaseName tgturp) .= ".mk") =<< (mdo
     let file x = C3.file' tgtdir tgtdir x
     let cc = extvar "CC"
     let ld = extvar "LD"
     let incl = extvar "UR_INCLUDE_DIR"
 
-    let tgt_in = file "Static.urp.in"
-    let tgt = file "Static.urp"
+    let tgt_in = file (takeBaseName tgturp .= ".urp.in") 
+    let tgt = file (takeBaseName tgturp .= ".urp") 
 
     urp_in <- C3.ruleM tgt_in $ do
       flip urdeps tgt_in (
         defaultConfig {
-          urObj = \f -> rule f $ do
+          urObjRule = \f -> rule f $ do
             case isInfixOf "data" (C3.takeExtensions f) of
               True -> do
                 let src = C3.fromFilePath . (++"_blob") . dropExtensions . C3.toFilePath $ f

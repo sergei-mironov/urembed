@@ -93,10 +93,13 @@ parse_js file = do
   where
     urs_line :: [(String,String)] -> String
     urs_line [] = error "wrong function signature"
-    urs_line ((n,nt):args) = printf "val %s : %s" n (fmtargs args nt) where
-      fmtargs :: [(String,String)] -> String -> String
-      fmtargs ((an,at):as) ret = printf "%s -> %s" at (fmtargs as ret)
-      fmtargs ([]) ret = printf "transaction %s" ret
+    urs_line ((n,nt):args) = printf "val %s : %s" n (fmtargs args) where
+      fmtargs :: [(String,String)] -> String
+      fmtargs ((an,at):as) = printf "%s -> %s" at (fmtargs as)
+      fmtargs [] = let pf = stripPrefix "pure_" nt in
+                   case pf of
+                     Just p -> p
+                     Nothing -> printf "transaction %s" nt
 
     extractEmbeddedType :: (Monad m) => (String,Bool) -> m (String,String)
     extractEmbeddedType ([],_) = error "BUG: empty identifier"
@@ -147,6 +150,10 @@ pargs = A
 replaceExtensions f x = addExtension (dropExtensions f) x
 f .= x = replaceExtensions f x
 
+guessMime inf = fixup $ BS.unpack (defaultMimeLookup (fromString inf)) where
+  fixup "application/javascript" = "text/javascript"
+  fixup m = m
+
 main :: IO ()
 main = do
   h <- (getDataFileName >=> readFile) "Help.txt" 
@@ -183,7 +190,7 @@ main_ (A tgturp False ins) = do
     let modname_c = modname ++ "_c"
     let blobname = modname ++ "_c_blob"
     let modname_js = modname ++ "_js"
-    let mime = BS.unpack (defaultMimeLookup (fromString inf))
+    let mime = guessMime inf
 
     -- Module_c.urp
     let binfunc = printf "uw_%s_binary" modname_c
@@ -250,8 +257,8 @@ main_ (A tgturp False ins) = do
                             e <- parse_js inf
                             case e of
                               Left e -> do
-                                err e
-                                return ([],[])
+                                err $ printf "Error while parsing %s" (takeFileName inf)
+                                fail e
                               Right decls -> do
                                 -- err (show decls)
                                 return decls
@@ -264,14 +271,16 @@ main_ (A tgturp False ins) = do
 
     write (replaceExtension modname_js ".urp") $ do
       line $ "ffi " ++ modname_js
-      forM_ jsdecls $ \decl ->
+      forM_ jsdecls $ \decl -> do
         line $ printf "jsFunc %s.%s = %s" modname_js (urname decl) (jsname decl)
+        line $ printf "benignEffectful %s.%s" modname_js (urname decl)
     
     -- Module.urp
     write (replaceExtension modname ".urs") $ do
       line $ "val binary : unit -> transaction blob"
       line $ "val text : unit -> transaction string"
       line $ "val blobpage : unit -> transaction page"
+      line $ "val geturl : url"
       forM_ jstypes $ \decl -> line (urtdecl decl)
       forM_ jsdecls $ \d -> line (urdecl d)
 
@@ -281,6 +290,7 @@ main_ (A tgturp False ins) = do
       forM_ jsdecls $ \d ->
         line $ printf "val %s = %s.%s" (urname d) modname_js (urname d)
       line $ printf "fun blobpage {} = b <- binary () ; returnBlob b (blessMime \"%s\")" mime
+      line $ "val geturl = url(blobpage {})"
 
     write (replaceExtension modname ".urp") $ do
       line $ "library " ++ modname_c
@@ -307,21 +317,26 @@ main_ (A tgturp False ins) = do
     line "val binary : content -> transaction blob"
     line "val text : content -> transaction string"
     line "val blobpage : content -> transaction page"
+    line "val urls : list url"
 
   writeFile (replaceExtensions tgt_in "ur") $ execWriter $ do
     line datatype
-    line "fun binary c = case c of"
+    line $ "fun binary c = case c of"
     line $ printf "      %s => %s.binary ()" (mkname (head ins)) (mkname (head ins))
     forM_ (tail ins) (\f -> line $
           printf "    | %s => %s.binary ()" (mkname f) (mkname f))
-    line "fun blobpage c = case c of"
+    line $ "fun blobpage c = case c of"
     line $ printf "      %s => %s.blobpage ()" (mkname (head ins)) (mkname (head ins))
     forM_ (tail ins) (\f -> line $
            printf "    | %s => %s.blobpage ()" (mkname f) (mkname f))
-    line "fun text c = case c of"
+    line $ "fun text c = case c of"
     line $ printf "      %s => %s.text ()" (mkname (head ins)) (mkname (head ins))
     forM_ (tail ins) (\f -> line $
            printf "    | %s => %s.text ()" (mkname f) (mkname f))
+    line $ "val urls ="
+    forM_ ins (\f -> line $
+      printf "     %s.geturl :: " (mkname f))
+    line $ "       []"
 
   -- Build the Makefile
   setCurrentDirectory tgtdir
@@ -371,9 +386,11 @@ main_ (A tgturp False ins) = do
           fail $ printf "process %s failed to complete with %s" (show args) (show code)
         return ()
 
-      mkname = upper1 . map under . takeFileName where
+      mkname f = upper1 . notnum . map under . takeFileName $ f where
         under c | c`elem`"_-. /" = '_'
                 | otherwise = c
         upper1 [] = []
         upper1 (x:xs) = (toUpper x) : xs
+        notnum n@(x:xs) | isDigit x = "f" ++ n
+                        | otherwise = n
 

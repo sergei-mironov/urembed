@@ -92,12 +92,15 @@ To embed Style.css into ypur Ur/Web project:
         # App.ur
 
         (* Direct call *)
-        fun serve_css a =
+        fun serve_css {} =
           b <- Static.binary Static.Style_css;
           returnBlob b (blessMime "text/css")
 
-        (* Using a dictionary wrappers *)
+        (* Serve using a blobpage. Uremebed calls blessMime inside *)
         fun style2 {} = Static.blobpage Static.Style_css
+
+        (* Serve directly, not using a dictionary *)
+        fun style3 {} = Style_css.blobpage {}
 
 ### JavaScript FFI helper
 

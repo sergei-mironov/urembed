@@ -90,7 +90,6 @@ To embed Style.css into ypur Ur/Web project:
 
 
         # App.ur
-
         (* Direct call *)
         fun serve_css {} =
           b <- Static.binary Static.Style_css;
@@ -104,60 +103,60 @@ To embed Style.css into ypur Ur/Web project:
 
 ### JavaScript FFI helper
 
-Urembed is able to bind top-level JavaScript functions via
-JavaScript FFI. In order to do it, user has to make sure that FILE has .js
-extension and contains top-level functions named according to the 'name\_\_type'
-format. For example:
-    
-    # FILE.js
-    function init__unit(menustyle__css_class, text__string) {}
-
-    will be translated into Ur/Web's function
-
-    # FILE.urs
-    val init : css_class -> string -> transaction unit
-
-Also, it is allowed to drop the name\_\_ part for argument names, so this is
-also legal
-
-    # FILE.js
-    function init__unit(css_class, string) {}
-
-    results in
-
-    # FILE.urs
-    val init : css_class -> string -> transaction unit
-  
-
-Next, the pure\_ prefix in type name will instruct urembed to declare pure
-function (without 'transaction' part)
-
-    # FILE.js
-    function init__pure_string(css_class, string) {}
-
-    results in
-
-    # FILE.urs
-    val init : css_class -> string -> string
-
-Finally, sometimes users want to declare their own types. Here is how to do it
-with Urembed:
-
-    # FILE.js
-
-    // Dummy javascript variable, just to set type name
-    var type__tmce_imglist;
-
-    function imglist_new__tmce_imglist( unit ) {
-      return [];
-    }
-
-    function imglist_insert__tmce_imglist(string, url, tmce_imglist) {
-      return tmce_imglist.concat([{title:string, value:url}]);
-    }
-
-    # FILE.urs
-    type tmce_imglist
-    val imglist_new : unit -> transaction tmce_imglist
-    val imglist_insert : string -> url -> tmce_imglist -> transaction tmce_imglist
+  *  Urembed is able to bind top-level JavaScript functions via
+     JavaScript FFI. In order to do it, user has to make sure that FILE has .js
+     extension and contains top-level functions named according to the 'name\_\_type'
+     format. For example:
+         
+         # FILE.js
+         function init__unit(menustyle__css_class, text__string) {}
+   
+     will be translated into Ur/Web's function
+   
+         # FILE.urs
+         val init : css_class -> string -> transaction unit
+   
+  *  Also, it is allowed to drop the name\_\_ part for argument names, so this is
+     also legal
+   
+         # FILE.js
+         function init__unit(css_class, string) {}
+   
+     results in
+   
+         # FILE.urs
+         val init : css_class -> string -> transaction unit
+       
+   
+  *  Next, the pure\_ prefix in type name will instruct urembed to declare pure
+     function (without 'transaction' part)
+   
+         # FILE.js
+         function init__pure_string(css_class, string) {}
+   
+     results in
+   
+         # FILE.urs
+         val init : css_class -> string -> string
+   
+  *  Finally, sometimes users want to declare their own types. Here is how to do it
+     with Urembed:
+   
+         # FILE.js
+   
+         // Dummy javascript variable, just to set type name
+         var type__tmce_imglist;
+   
+         function imglist_new__tmce_imglist( unit ) {
+           return [];
+         }
+   
+         function imglist_insert__tmce_imglist(string, url, tmce_imglist) {
+           return tmce_imglist.concat([{title:string, value:url}]);
+         }
+   
+         # FILE.urs
+         type tmce_imglist
+         val imglist_new : unit -> transaction tmce_imglist
+         val imglist_insert : string -> url -> tmce_imglist -> transaction tmce_imglist
 

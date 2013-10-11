@@ -70,34 +70,34 @@ To embed Style.css into ypur Ur/Web project:
 
   1. Run urembed
 
-      $ urembed -o lib/autogen/Static.urp Style.css
+        $ urembed -o lib/autogen/Static.urp Style.css
 
-      Static.urp.in will be generated as well as Static.mk describing the rules
-      to build all the binaries
+        Static.urp.in will be generated as well as Static.mk describing the rules
+        to build all the binaries
 
   2. Run make to build Static.urp
 
-      $ make -C lib/autogen -f Static.mk urp
+        $ make -C lib/autogen -f Static.mk urp
 
   3. Include Static.urp into your master .urp file.
 
-      # App.urp
-      ...
-      library lib/autogen/Static
-      ...
+        # App.urp
+        ...
+        library lib/autogen/Static
+        ...
 
   4. Use the functionality. In this case, lets ship Style.css to the user
 
 
-      # App.ur
+        # App.ur
 
-      (* Direct call *)
-      fun serve_css a =
-        b <- Static.binary Static.Style_css;
-        returnBlob b (blessMime "text/css")
+        (* Direct call *)
+        fun serve_css a =
+          b <- Static.binary Static.Style_css;
+          returnBlob b (blessMime "text/css")
 
-      (* Using a dictionary wrappers *)
-      fun style2 {} = Static.blobpage Static.Style_css
+        (* Using a dictionary wrappers *)
+        fun style2 {} = Static.blobpage Static.Style_css
 
 ### JavaScript FFI helper
 

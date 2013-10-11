@@ -103,10 +103,12 @@ To embed Style.css into ypur Ur/Web project:
 
 ### JavaScript FFI helper
 
-  *  Urembed is able to bind top-level JavaScript functions via
-     JavaScript FFI. In order to do it, user has to make sure that FILE has .js
-     extension and contains top-level functions named according to the 'name\_\_type'
-     format. For example:
+Urembed is able to bind top-level JavaScript functions via
+JavaScript FFI. In order to do it, user has to make sure that FILE has .js
+extension and contains top-level functions named according to the 'name\_\_type'
+format. For example:
+
+  * Simple function
          
          # FILE.js
          function init__unit(menustyle__css_class, text__string) {}

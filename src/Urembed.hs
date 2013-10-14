@@ -154,6 +154,8 @@ guessMime inf = fixup $ BS.unpack (defaultMimeLookup (fromString inf)) where
   fixup "application/javascript" = "text/javascript"
   fixup m = m
 
+-- readBinaryFile name = BS.openBinaryFile name ReadMode >>= BS.hGetContents
+
 main :: IO ()
 main = do
   h <- (getDataFileName >=> readFile) "Help.txt" 
@@ -200,26 +202,27 @@ main_ (A tgturp False ins) = do
       line $ "val binary : unit -> transaction blob"
       line $ "val text : unit -> transaction string"
 
+    content <- liftIO $ BS.readFile inf
     let csrc = replaceExtension modname_c ".c"
     write csrc $ do
       line $ "// Thanks, http://stupefydeveloper.blogspot.ru/2008/08/cc-embed-binary-data-into-elf.html"
       line $ "#include <urweb.h>"
       line $ "#include <stdio.h>"
-      let start = printf "_binary___%s_start" blobname
-      let size = printf "_binary___%s_size" blobname
-      line $ "extern int " ++ size  ++ ";"
-      line $ "extern int " ++ start ++ ";"
+      -- let start = printf "_binary___%s_start" blobname
+      -- let size = printf "_binary___%s_size" blobname
+      line $ printf "#define BLOBSZ %d" (BS.length content)
+      line $ "static char blob[BLOBSZ];"
       line $ "uw_Basis_blob " ++ binfunc ++ " (uw_context ctx, uw_unit unit)"
       line $ "{"
-      line $ "  uw_Basis_blob blob;"
-      line $ "  blob.data = (char*)&" ++ start ++ ";"
-      line $ "  blob.size = (size_t)&" ++ size ++ ";"
-      line $ "  return blob;"
+      line $ "  uw_Basis_blob uwblob;"
+      line $ "  uwblob.data = &blob[0];"
+      line $ "  uwblob.size = BLOBSZ;"
+      line $ "  return uwblob;"
       line $ "}"
       line $ ""
       line $ "uw_Basis_string " ++ textfunc ++ " (uw_context ctx, uw_unit unit) {"
-      line $ "  char* data = (char*)&" ++ start ++ ";"
-      line $ "  size_t size = (size_t)&" ++ size ++ ";"
+      line $ "  char* data = &blob[0];"
+      line $ "  size_t size = sizeof(blob);"
       line $ "  char * c = uw_malloc(ctx, size+1);"
       line $ "  char * write = c;"
       line $ "  int i;"
@@ -232,6 +235,17 @@ main_ (A tgturp False ins) = do
       line $ "  *write=0;"
       line $ "  return c;"
       line $ "  }"
+      line $ ""
+
+    let append n wr = BS.appendFile (indest n) $ execWriter $ wr
+    append csrc $ do
+      let line s = tell ((BS.pack s)`mappend`(BS.pack "\n"))
+      line $ ""
+      line $ "static char blob[BLOBSZ] = {"
+      let buf = reverse $ BS.foldl (\a c -> (BS.pack (printf "0x%02X ," c)) : a) [] content
+      tell (BS.concat buf)
+      line $ "};"
+      line $ ""
 
     let header = (replaceExtension modname_c ".h")
     write header $ do
@@ -240,17 +254,17 @@ main_ (A tgturp False ins) = do
       line $ "uw_Basis_string " ++ textfunc ++ " (uw_context ctx, uw_unit unit);"
 
     let binobj = replaceExtension modname_c ".o"
-    let dataobj = replaceExtension modname_c ".data.o"
+    -- let dataobj = replaceExtension modname_c ".data.o"
 
     write (replaceExtension modname_c ".urp") $ do
       line $ "ffi " ++ modname_c
       line $ "include " ++ header
       line $ "link " ++ binobj
-      line $ "link " ++ dataobj
+      -- line $ "link " ++ dataobj
 
     -- Copy the file to the target dir and run linker from there. Thus the names
     -- it places will be correct (see start,size in _c)
-    copyFile inf (indest blobname)
+    -- copyFile inf (indest blobname)
 
     -- Module_js.urp
     (jstypes,jsdecls) <- if ((takeExtension inf) == ".js") then do
@@ -295,6 +309,8 @@ main_ (A tgturp False ins) = do
     write (replaceExtension modname ".urp") $ do
       line $ "library " ++ modname_c
       line $ "library " ++ modname_js
+      line $ printf "safeGet %s/blobpage" modname
+      line $ printf "safeGet %s/blob" modname
       line $ ""
       line $ modname
 
